@@ -5,7 +5,7 @@ Installation:
 Download --> `pip install -r requirements.txt` --> that's it.
 
 Usage:
-Open the app by command: `python TE.py`
+Open the app by command: `python Transcript_extractor.py`
 
 Usage is quite simple,
 Enter the link of playlist --> select directory --> extract and download.
