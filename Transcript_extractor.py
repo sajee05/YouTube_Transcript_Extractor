@@ -5,7 +5,7 @@ import os
 import re
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound # MODIFIED_LINE
 from youtube_transcript_api.formatters import TextFormatter
 import time
 
@@ -354,11 +354,81 @@ class YouTubeTranscriptExtractor:
                         if attempt > 1:
                             status_message += f" (Attempt {attempt})"
                         self.update_status(status_message, "blue")
+
+                        # Log available transcripts for diagnostics
+                        print(f"[DIAGNOSTIC] Processing video ID: {video['id']}, Title: {video['title']}")
+                        try:
+                            transcript_list_obj = YouTubeTranscriptApi.list_transcripts(video['id'])
+                            print(f"[DIAGNOSTIC] Available transcripts for {video['id']}:")
+                            found_any = False
+                            for ts in transcript_list_obj:
+                                found_any = True
+                                print(f"  - Language: {ts.language}, Code: {ts.language_code}, Generated: {ts.is_generated}, Translatable: {ts.is_translatable}")
+                                if ts.is_translatable:
+                                    translation_codes = [t_lang.language_code for t_lang in ts.translation_languages] # MODIFIED_LINE
+                                    print(f"    Can be translated to: {translation_codes}")
+                            if not found_any:
+                                print("      None found by list_transcripts.")
+                        except Exception as log_e:
+                            print(f"[DIAGNOSTIC] Error listing transcripts for {video['id']}: {log_e}")
                         
-                        # Get transcript
-                        transcript_list = YouTubeTranscriptApi.get_transcript(video['id'])
+                        # Get transcript (original problematic line)
+                        # --- MODIFICATION START ---
+                        # Try to get Hindi, then English, then any available transcript
+                        transcript_data_to_format = None
+                        fetched_lang_code = "N/A"
+
+                        try:
+                            available_transcripts_obj = YouTubeTranscriptApi.list_transcripts(video['id'])
+                            
+                            preferred_langs = ['hi', 'en']
+                            found_preferred = False
+
+                            for lang in preferred_langs:
+                                try:
+                                    # find_transcript searches both manual and generated
+                                    target_transcript = available_transcripts_obj.find_transcript([lang])
+                                    transcript_data_to_format = target_transcript.fetch()
+                                    fetched_lang_code = target_transcript.language_code
+                                    print(f"[INFO] Fetched '{fetched_lang_code}' transcript for {video['title']}.")
+                                    found_preferred = True
+                                    break # Found a preferred transcript
+                                except NoTranscriptFound: # MODIFIED_LINE
+                                    print(f"[INFO] No '{lang}' transcript found for {video['title']}. Trying next preferred.")
+                                    continue # Try next preferred language
+                            
+                            if not found_preferred:
+                                print(f"[INFO] No preferred transcript (hi, en) found for {video['title']}. Trying first available.")
+                                # Convert iterator to list to safely access first element if it exists
+                                all_available_list = list(available_transcripts_obj)
+                                if all_available_list:
+                                    first_available_transcript = all_available_list[0]
+                                    transcript_data_to_format = first_available_transcript.fetch()
+                                    fetched_lang_code = first_available_transcript.language_code
+                                    print(f"[INFO] Fetched first available transcript '{fetched_lang_code}' for {video['title']}.")
+                                else:
+                                    # No transcripts at all were listed
+                                    print(f"[WARN] No transcripts listed by API for {video['title']}.")
+                                    raise NoTranscriptFound(video['id'], video['title'], "No transcripts found after checking preferred and available.") # MODIFIED_LINE
+
+                            if transcript_data_to_format is None:
+                                # This case implies no transcripts were found by any method.
+                                print(f"[ERROR] transcript_data_to_format is None for {video['title']} after all checks.")
+                                raise NoTranscriptFound(video['id'], video['title'], "No transcript data could be fetched.") # MODIFIED_LINE
+
+                        except Exception as e_fetch_custom:
+                            # This catch block is for errors during the custom fetching logic itself
+                            # (e.g., list_transcripts fails, or NoTranscriptFound was raised by our logic).
+                            # We want the outer retry loop to handle this.
+                            print(f"[WARN] Custom transcript fetch failed for {video['title']} (attempt {attempt}): {e_fetch_custom}")
+                            raise e_fetch_custom # Re-raise to be caught by the main retry loop for this video
+
+                        # The variable 'transcript_list' is expected by the formatter
+                        transcript_list = transcript_data_to_format
+                        # --- MODIFICATION END ---
                         
                         # Format transcript with timestamps
+                        # This line now uses the 'transcript_list' populated by the new logic
                         formatted_transcript = self.format_transcript_with_timestamps(
                             transcript_list, video['title']
                         )
@@ -434,10 +504,20 @@ class YouTubeTranscriptExtractor:
         formatted_content += f"**Transcript extracted on:** {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         formatted_content += "---\n\n"
         
-        for entry in transcript_list:
-            start_time = entry['start']
-            duration = entry['duration']
-            text = entry['text']
+        for i, entry in enumerate(transcript_list): # Added enumerate for indexed logging
+            # --- DIAGNOSTIC PRINT START ---
+            if i == 0: # Print only for the first entry to avoid flooding console
+                print(f"[FORMATTER_DIAG] Type of entry: {type(entry)}")
+                print(f"[FORMATTER_DIAG] Content of entry (raw): {entry}")
+                # Attempt to print attributes if it's an object, or keys if dict
+                if hasattr(entry, '__dict__'):
+                    print(f"[FORMATTER_DIAG] Content of entry (__dict__): {entry.__dict__}")
+                elif isinstance(entry, dict):
+                    print(f"[FORMATTER_DIAG] Content of entry (keys): {list(entry.keys())}")
+            # --- DIAGNOSTIC PRINT END ---
+            start_time = entry.start # MODIFIED_LINE
+            duration = entry.duration # MODIFIED_LINE
+            text = entry.text # MODIFIED_LINE
             
             # Convert seconds to MM:SS format
             minutes = int(start_time // 60)
