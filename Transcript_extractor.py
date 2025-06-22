@@ -5,9 +5,10 @@ import os
 import re
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound # MODIFIED_LINE
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 from youtube_transcript_api.formatters import TextFormatter
 import time
+import requests
 
 class YouTubeTranscriptExtractor:
     def __init__(self, root):
@@ -120,34 +121,30 @@ class YouTubeTranscriptExtractor:
     def extract_playlist_id(self, url):
         """Extract playlist ID from YouTube URL"""
         try:
-            print(f"[DEBUG] extract_playlist_id: Received URL: {url}") # ADDED_LINE
+            print(f"[DEBUG] extract_playlist_id: Received URL: {url}")
             parsed_url = urlparse(url)
-            print(f"[DEBUG] extract_playlist_id: Parsed netloc: {parsed_url.netloc}") # ADDED_LINE
-            playlist_id_to_return = None # ADDED_LINE
+            print(f"[DEBUG] extract_playlist_id: Parsed netloc: {parsed_url.netloc}")
+            playlist_id_to_return = None
             if 'youtube.com' in parsed_url.netloc:
                 query_params = parse_qs(parsed_url.query)
                 if 'list' in query_params:
-                    playlist_id_to_return = query_params['list'][0] # MODIFIED_LINE
+                    playlist_id_to_return = query_params['list'][0]
             elif 'youtu.be' in parsed_url.netloc:
-                # Handle youtu.be links with playlist parameter
                 query_params = parse_qs(parsed_url.query)
                 if 'list' in query_params:
-                    playlist_id_to_return = query_params['list'][0] # MODIFIED_LINE
-            print(f"[DEBUG] extract_playlist_id: Extracted ID: {playlist_id_to_return}") # ADDED_LINE
-            return playlist_id_to_return # MODIFIED_LINE
+                    playlist_id_to_return = query_params['list'][0]
+            print(f"[DEBUG] extract_playlist_id: Extracted ID: {playlist_id_to_return}")
+            return playlist_id_to_return
         except Exception as e:
             print(f"Error extracting playlist ID: {e}")
-            print(f"[DEBUG] extract_playlist_id: Extracted ID (on error): None") # ADDED_LINE
             return None
 
     def sanitize_filename(self, filename):
         """Remove or replace invalid characters for filenames"""
-        # Remove invalid characters for Windows filenames
         invalid_chars = '<>:"/\\|?*'
         for char in invalid_chars:
             filename = filename.replace(char, '_')
         
-        # Remove extra spaces and limit length
         filename = re.sub(r'\s+', ' ', filename.strip())
         if len(filename) > 100:
             filename = filename[:100]
@@ -170,29 +167,27 @@ class YouTubeTranscriptExtractor:
             messagebox.showerror("Error", "Please enter a YouTube playlist URL")
             return
         
-        # Run in separate thread to prevent GUI freezing
         threading.Thread(target=self._load_playlist_thread, daemon=True).start()
 
     def _load_playlist_thread(self):
         """Thread function to load playlist"""
         try:
-            current_url = self.playlist_url.get() # ADDED_LINE
-            print(f"[DEBUG] _load_playlist_thread: Loading URL: {current_url}") # ADDED_LINE
+            current_url = self.playlist_url.get()
+            print(f"[DEBUG] _load_playlist_thread: Loading URL: {current_url}")
             self.update_status("Loading playlist...", "blue")
             self.update_progress(10)
             
-            playlist_id = self.extract_playlist_id(current_url) # MODIFIED_LINE
-            print(f"[DEBUG] _load_playlist_thread: Playlist ID from extract_playlist_id: {playlist_id}") # ADDED_LINE
+            playlist_id = self.extract_playlist_id(current_url)
+            print(f"[DEBUG] _load_playlist_thread: Playlist ID from extract_playlist_id: {playlist_id}")
             if not playlist_id:
                 self.update_status("Invalid playlist URL", "red")
                 return
             
-            # Configure yt-dlp options
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': True,
-                'playlist_items': '1-1000',  # Limit to prevent excessive loading
+                'playlist_items': '1-1000',
             }
             
             self.update_progress(30)
@@ -209,13 +204,11 @@ class YouTubeTranscriptExtractor:
                 self.update_status("No videos found in playlist", "red")
                 return
             
-            # Clear previous videos
             self.videos = []
             self.video_vars = []
             
-            # Process videos
             for entry in playlist_info['entries']:
-                if entry:  # Some entries might be None for private/deleted videos
+                if entry:
                     video_info = {
                         'id': entry.get('id', ''),
                         'title': entry.get('title', 'Unknown Title'),
@@ -226,13 +219,11 @@ class YouTubeTranscriptExtractor:
             
             self.update_progress(80)
             
-            # Update GUI with video list
             self.display_videos()
             
             self.update_progress(100)
             self.update_status(f"Loaded {len(self.videos)} videos from playlist", "green")
             
-            # Reset progress bar after a delay
             self.root.after(2000, lambda: self.update_progress(0))
             
         except Exception as e:
@@ -241,12 +232,12 @@ class YouTubeTranscriptExtractor:
 
     def display_videos(self):
         """Display videos list with checkboxes"""
-        self.videos_text.config(state=tk.NORMAL)  # Enable editing to insert widgets
+        self.videos_text.config(state=tk.NORMAL)
         self.videos_text.delete(1.0, tk.END)
         
         if not self.videos:
             self.videos_text.insert(tk.END, "No videos loaded. Please load a playlist first.")
-            self.videos_text.config(state=tk.DISABLED) # Disable after modification
+            self.videos_text.config(state=tk.DISABLED)
             return
         
         self.videos_text.insert(tk.END, f"Found {len(self.videos)} videos in playlist:\n\n")
@@ -254,23 +245,19 @@ class YouTubeTranscriptExtractor:
         for i, video in enumerate(self.videos):
             if i < len(self.video_vars):
                 var = self.video_vars[i]
-                # Create Checkbutton with the video title
-                # Ensure the title is not excessively long for display in the checkbutton
                 display_title = video['title']
-                if len(display_title) > 70: # Truncate if too long
+                if len(display_title) > 70:
                     display_title = display_title[:67] + "..."
 
                 cb = ttk.Checkbutton(self.videos_text, text=f"{i+1:3}. {display_title}", variable=var)
                 
-                # Embed Checkbutton in ScrolledText
                 self.videos_text.window_create(tk.END, window=cb)
-                self.videos_text.insert(tk.END, "\n")  # Add a newline after each checkbutton
+                self.videos_text.insert(tk.END, "\n")
             else:
-                # Fallback for safety, though this shouldn't happen with correct logic
                 self.videos_text.insert(tk.END, f"{i+1:3}. {video['title']} (Error: Selection state unavailable)\n")
         
         self.videos_text.insert(tk.END, "\n\nNote: All videos are selected by default. Use 'Select All' or 'Deselect All' buttons to manage selection.")
-        self.videos_text.config(state=tk.DISABLED)  # Disable editing after inserting widgets
+        self.videos_text.config(state=tk.DISABLED)
 
     def select_all(self):
         """Select all videos"""
@@ -290,7 +277,6 @@ class YouTubeTranscriptExtractor:
             messagebox.showerror("Error", "Please load a playlist first")
             return
         
-        # Select all videos
         self.select_all()
         self._fetch_transcripts()
 
@@ -323,12 +309,53 @@ class YouTubeTranscriptExtractor:
         
         threading.Thread(target=self._fetch_transcripts_thread, daemon=True).start()
 
+    def get_transcript_with_yt_dlp(self, video_id):
+        """Alternative method to get transcript using yt-dlp"""
+        try:
+            ydl_opts = {
+                'writesubtitles': True,
+                'writeautomaticsub': True,
+                'subtitleslangs': ['hi', 'en'],
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
+                
+                # Check for subtitles
+                if 'subtitles' in info:
+                    # Try Hindi first
+                    if 'hi' in info['subtitles']:
+                        return self.parse_yt_dlp_subtitles(info['subtitles']['hi']), 'hi'
+                    elif 'en' in info['subtitles']:
+                        return self.parse_yt_dlp_subtitles(info['subtitles']['en']), 'en'
+                
+                # Check for automatic captions
+                if 'automatic_captions' in info:
+                    if 'hi' in info['automatic_captions']:
+                        return self.parse_yt_dlp_subtitles(info['automatic_captions']['hi']), 'hi'
+                    elif 'en' in info['automatic_captions']:
+                        return self.parse_yt_dlp_subtitles(info['automatic_captions']['en']), 'en'
+                
+                return None, None
+                
+        except Exception as e:
+            print(f"[ERROR] yt-dlp transcript fetch failed: {e}")
+            return None, None
+
+    def parse_yt_dlp_subtitles(self, subtitle_info):
+        """Parse subtitle info from yt-dlp to transcript format"""
+        # This is a placeholder - actual implementation would need to download and parse the subtitle file
+        # For now, return None to indicate this method needs the actual subtitle content
+        return None
+
     def _fetch_transcripts_thread(self):
         """Thread function to fetch transcripts"""
         self.is_fetching = True
         
         try:
-            # Get selected videos
             selected_videos = [
                 video for i, video in enumerate(self.videos) 
                 if i < len(self.video_vars) and self.video_vars[i].get()
@@ -336,17 +363,17 @@ class YouTubeTranscriptExtractor:
             
             total_videos = len(selected_videos)
             successful_downloads = 0
-            failed_downloads_count = 0 # Renamed for clarity
-            failed_video_details = [] # To store (serial_num, title) of failed videos
+            failed_downloads_count = 0
+            failed_video_details = []
             
             self.update_status(f"Fetching transcripts for {total_videos} videos...", "blue")
             
             for i, video in enumerate(selected_videos):
-                video_serial_number = i + 1 # 1-based serial number for display
+                video_serial_number = i + 1
                 transcript_fetched_successfully = False
                 last_exception = None
 
-                for attempt in range(1, 4): # Max 3 attempts
+                for attempt in range(1, 4):
                     try:
                         progress = (video_serial_number / total_videos) * 100
                         self.update_progress(progress)
@@ -355,82 +382,55 @@ class YouTubeTranscriptExtractor:
                             status_message += f" (Attempt {attempt})"
                         self.update_status(status_message, "blue")
 
-                        # Log available transcripts for diagnostics
-                        print(f"[DIAGNOSTIC] Processing video ID: {video['id']}, Title: {video['title']}")
-                        try:
-                            transcript_list_obj = YouTubeTranscriptApi.list_transcripts(video['id'])
-                            print(f"[DIAGNOSTIC] Available transcripts for {video['id']}:")
-                            found_any = False
-                            for ts in transcript_list_obj:
-                                found_any = True
-                                print(f"  - Language: {ts.language}, Code: {ts.language_code}, Generated: {ts.is_generated}, Translatable: {ts.is_translatable}")
-                                if ts.is_translatable:
-                                    translation_codes = [t_lang.language_code for t_lang in ts.translation_languages] # MODIFIED_LINE
-                                    print(f"    Can be translated to: {translation_codes}")
-                            if not found_any:
-                                print("      None found by list_transcripts.")
-                        except Exception as log_e:
-                            print(f"[DIAGNOSTIC] Error listing transcripts for {video['id']}: {log_e}")
-                        
-                        # Get transcript (original problematic line)
-                        # --- MODIFICATION START ---
-                        # Try to get Hindi, then English, then any available transcript
-                        transcript_data_to_format = None
+                        transcript_data = None
                         fetched_lang_code = "N/A"
 
+                        # Method 1: Try youtube_transcript_api with better error handling
                         try:
-                            available_transcripts_obj = YouTubeTranscriptApi.list_transcripts(video['id'])
+                            # Try to list available transcripts first
+                            transcript_list = YouTubeTranscriptApi.list_transcripts(video['id'])
                             
-                            preferred_langs = ['hi', 'en']
-                            found_preferred = False
-
-                            for lang in preferred_langs:
+                            # Try to get Hindi transcript
+                            try:
+                                transcript = transcript_list.find_transcript(['hi'])
+                                transcript_data = transcript.fetch()
+                                fetched_lang_code = 'hi'
+                                print(f"[INFO] Fetched Hindi transcript for {video['title']}")
+                            except:
+                                # Try English if Hindi fails
                                 try:
-                                    # find_transcript searches both manual and generated
-                                    target_transcript = available_transcripts_obj.find_transcript([lang])
-                                    transcript_data_to_format = target_transcript.fetch()
-                                    fetched_lang_code = target_transcript.language_code
-                                    print(f"[INFO] Fetched '{fetched_lang_code}' transcript for {video['title']}.")
-                                    found_preferred = True
-                                    break # Found a preferred transcript
-                                except NoTranscriptFound: # MODIFIED_LINE
-                                    print(f"[INFO] No '{lang}' transcript found for {video['title']}. Trying next preferred.")
-                                    continue # Try next preferred language
-                            
-                            if not found_preferred:
-                                print(f"[INFO] No preferred transcript (hi, en) found for {video['title']}. Trying first available.")
-                                # Convert iterator to list to safely access first element if it exists
-                                all_available_list = list(available_transcripts_obj)
-                                if all_available_list:
-                                    first_available_transcript = all_available_list[0]
-                                    transcript_data_to_format = first_available_transcript.fetch()
-                                    fetched_lang_code = first_available_transcript.language_code
-                                    print(f"[INFO] Fetched first available transcript '{fetched_lang_code}' for {video['title']}.")
-                                else:
-                                    # No transcripts at all were listed
-                                    print(f"[WARN] No transcripts listed by API for {video['title']}.")
-                                    raise NoTranscriptFound(video['id'], video['title'], "No transcripts found after checking preferred and available.") # MODIFIED_LINE
-
-                            if transcript_data_to_format is None:
-                                # This case implies no transcripts were found by any method.
-                                print(f"[ERROR] transcript_data_to_format is None for {video['title']} after all checks.")
-                                raise NoTranscriptFound(video['id'], video['title'], "No transcript data could be fetched.") # MODIFIED_LINE
-
-                        except Exception as e_fetch_custom:
-                            # This catch block is for errors during the custom fetching logic itself
-                            # (e.g., list_transcripts fails, or NoTranscriptFound was raised by our logic).
-                            # We want the outer retry loop to handle this.
-                            print(f"[WARN] Custom transcript fetch failed for {video['title']} (attempt {attempt}): {e_fetch_custom}")
-                            raise e_fetch_custom # Re-raise to be caught by the main retry loop for this video
-
-                        # The variable 'transcript_list' is expected by the formatter
-                        transcript_list = transcript_data_to_format
-                        # --- MODIFICATION END ---
+                                    transcript = transcript_list.find_transcript(['en'])
+                                    transcript_data = transcript.fetch()
+                                    fetched_lang_code = 'en'
+                                    print(f"[INFO] Fetched English transcript for {video['title']}")
+                                except:
+                                    # Get first available transcript
+                                    for transcript in transcript_list:
+                                        try:
+                                            transcript_data = transcript.fetch()
+                                            fetched_lang_code = transcript.language_code
+                                            print(f"[INFO] Fetched {fetched_lang_code} transcript for {video['title']}")
+                                            break
+                                        except:
+                                            continue
                         
-                        # Format transcript with timestamps
-                        # This line now uses the 'transcript_list' populated by the new logic
+                        except Exception as e:
+                            print(f"[WARN] youtube_transcript_api failed: {e}")
+                            
+                            # Method 2: Try direct get_transcript as fallback
+                            try:
+                                transcript_data = YouTubeTranscriptApi.get_transcript(video['id'])
+                                fetched_lang_code = 'auto'
+                                print(f"[INFO] Fetched auto transcript for {video['title']}")
+                            except:
+                                raise Exception("All transcript fetch methods failed")
+
+                        if not transcript_data:
+                            raise Exception("No transcript data retrieved")
+
+                        # Format transcript
                         formatted_transcript = self.format_transcript_with_timestamps(
-                            transcript_list, video['title']
+                            transcript_data, video['title']
                         )
                         
                         # Save to file
@@ -442,28 +442,18 @@ class YouTubeTranscriptExtractor:
                         
                         successful_downloads += 1
                         transcript_fetched_successfully = True
-                        break # Exit retry loop on success
+                        break
                         
                     except Exception as e:
                         last_exception = e
                         print(f"Attempt {attempt} failed for {video['title']}: {e}")
                         if attempt < 3:
                             self.update_status(f"Retrying {video['title'][:40]}... (Attempt {attempt+1})", "orange")
-                            time.sleep(2) # Wait 2 seconds before retrying
+                            time.sleep(3)  # Increased wait time
                         else:
-                            # All retries failed
                             print(f"All retries failed for {video['title']}: {last_exception}")
                             failed_downloads_count += 1
                             failed_video_details.append((video_serial_number, video['title']))
-                
-                if not transcript_fetched_successfully and last_exception:
-                    # This case should be covered by the else in the retry loop,
-                    # but as a safeguard if loop finishes without success or final exception.
-                    # This ensures it's counted if something unexpected happens.
-                    if not any(vd[0] == video_serial_number for vd in failed_video_details): # Avoid double counting
-                        print(f"Final error processing {video['title']} after retries: {last_exception}")
-                        failed_downloads_count += 1
-                        failed_video_details.append((video_serial_number, video['title']))
             
             # Final update
             self.update_progress(100)
@@ -478,16 +468,14 @@ class YouTubeTranscriptExtractor:
                     f"Successfully downloaded {successful_downloads} transcripts!", "green"
                 )
             else:
-                status_text = f"Downloaded {successful_downloads}, {failed_downloads_count} failed. See pop-up for details."
+                status_text = f"Downloaded {successful_downloads}, {failed_downloads_count} failed."
                 self.update_status(status_text, "orange")
                 completion_message += "\nFailed Videos:\n"
                 for sn, title in failed_video_details:
                     completion_message += f"  {sn}. {title}\n"
 
-            # Show completion message
             messagebox.showinfo("Complete", completion_message)
             
-            # Reset progress bar after delay
             self.root.after(3000, lambda: self.update_progress(0))
             
         except Exception as e:
@@ -504,20 +492,14 @@ class YouTubeTranscriptExtractor:
         formatted_content += f"**Transcript extracted on:** {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         formatted_content += "---\n\n"
         
-        for i, entry in enumerate(transcript_list): # Added enumerate for indexed logging
-            # --- DIAGNOSTIC PRINT START ---
-            if i == 0: # Print only for the first entry to avoid flooding console
-                print(f"[FORMATTER_DIAG] Type of entry: {type(entry)}")
-                print(f"[FORMATTER_DIAG] Content of entry (raw): {entry}")
-                # Attempt to print attributes if it's an object, or keys if dict
-                if hasattr(entry, '__dict__'):
-                    print(f"[FORMATTER_DIAG] Content of entry (__dict__): {entry.__dict__}")
-                elif isinstance(entry, dict):
-                    print(f"[FORMATTER_DIAG] Content of entry (keys): {list(entry.keys())}")
-            # --- DIAGNOSTIC PRINT END ---
-            start_time = entry.start # MODIFIED_LINE
-            duration = entry.duration # MODIFIED_LINE
-            text = entry.text # MODIFIED_LINE
+        for entry in transcript_list:
+            # Handle both dict and object formats
+            if isinstance(entry, dict):
+                start_time = entry.get('start', 0)
+                text = entry.get('text', '')
+            else:
+                start_time = getattr(entry, 'start', 0)
+                text = getattr(entry, 'text', '')
             
             # Convert seconds to MM:SS format
             minutes = int(start_time // 60)
@@ -533,10 +515,8 @@ def main():
     root = tk.Tk()
     app = YouTubeTranscriptExtractor(root)
     
-    # Set minimum window size
     root.minsize(600, 500)
     
-    # Center window on screen
     root.update_idletasks()
     width = root.winfo_width()
     height = root.winfo_height()
